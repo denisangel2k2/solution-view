@@ -22,7 +22,9 @@ import com.intellij.openapi.vfs.newvfs.events.VFilePropertyChangeEvent
 import com.intellij.util.messages.Topic
 import dev.solutionview.model.MsBuildEvaluator
 import dev.solutionview.model.MsBuildProject
+import dev.solutionview.model.OutsideRoots
 import dev.solutionview.model.ProjectContents
+import dev.solutionview.model.ProjectItem
 import dev.solutionview.model.Solution
 import dev.solutionview.model.SolutionParser
 import dev.solutionview.model.SolutionProject
@@ -76,6 +78,7 @@ class SolutionService(
         var solutionPath: String? = null
         var showAllFiles: Boolean = false
         var solutionPaneShown: Boolean = false
+        var addedContentRoots: MutableList<String> = mutableListOf()
     }
 
     private var persisted = PersistedState()
@@ -204,6 +207,7 @@ class SolutionService(
             states.clear()
             statusMessage = "No .sln or .slnx file found in ${baseDir() ?: "the project folder"}"
             changed.tryEmit(Unit)
+            syncContentRoots()
             return null
         }
         val parsed = try {
@@ -239,10 +243,21 @@ class SolutionService(
 
     private suspend fun evaluate(projectPaths: Collection<Path>) {
         evaluateAll(projectPaths)
+        syncContentRoots()
         // Now that we know which projects are executables, offer a run configuration for each.
         withContext(Dispatchers.EDT) {
             dev.solutionview.run.DotnetRunConfigurations.ensureForExecutables(project)
         }
+    }
+
+    @Synchronized
+    private fun syncContentRoots() {
+        val base = baseDir() ?: return
+        val roots = solution?.let { current ->
+            OutsideRoots.of(current, base) { contents(it.path)?.project?.items.orEmpty().map(ProjectItem::path) }
+        }.orEmpty()
+        persisted.addedContentRoots =
+            SolutionContentRoots.sync(project, roots, persisted.addedContentRoots).toMutableList()
     }
 
     private suspend fun evaluateAll(projectPaths: Collection<Path>) = coroutineScope {
@@ -338,7 +353,7 @@ class SolutionService(
     }
 
     private fun isBuildOutput(path: Path): Boolean =
-        (0 until path.nameCount).any { val part = path.getName(it).toString(); part == "bin" || part == "obj" }
+        (0 until path.nameCount).any { path.getName(it).toString() in BUILD_OUTPUT_DIRS }
 
     private fun baseDir(): Path? = project.guessProjectDir()?.toNioPathOrNull()
 
