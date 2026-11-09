@@ -13,6 +13,8 @@ It works on Windows, macOS and Linux.
   Multi-targeted projects show the files of their last target framework, as Rider shows one framework.
   If `dotnet` is missing or MSBuild fails (for example Windows-only or C++ projects on macOS), it reads the
   project XML and marks the project "estimated". That reader handles SDK-style, old-style and shared projects.
+- Projects, linked files and solution items outside the solution folder become extra content roots
+  (with `bin` and `obj` excluded), so Search Everywhere (Double Shift), Go to File and Find in Files find them.
 - **Dependencies** node per project: target frameworks, NuGet packages, project references.
 - **Show All Files** toggle (files outside the project show grayed), file nesting
   (`Foo.xaml.cs`, `appsettings.Development.json`, `Foo.Designer.cs`, ...).
