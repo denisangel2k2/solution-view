@@ -258,6 +258,7 @@ class SolutionService(
         }.orEmpty()
         persisted.addedContentRoots =
             SolutionContentRoots.sync(project, roots, persisted.addedContentRoots).toMutableList()
+        SolutionVcsRoots.register(project, listOf(base) + roots)
     }
 
     private suspend fun evaluateAll(projectPaths: Collection<Path>) = coroutineScope {

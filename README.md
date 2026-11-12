@@ -15,6 +15,10 @@ It works on Windows, macOS and Linux.
   project XML and marks the project "estimated". That reader handles SDK-style, old-style and shared projects.
 - Projects, linked files and solution items outside the solution folder become extra content roots
   (with `bin` and `obj` excluded), so Search Everywhere (Double Shift), Go to File and Find in Files find them.
+- Git works when the repository root is above the solution folder (for example a worktree): the plugin
+  registers the root, so the Commit, Log and Pull Requests tool windows appear.
+- Git colors in the tree: files show their status, and projects, folders and solution folders that
+  contain modified, deleted or untracked files show the "changed descendants" color.
 - **Dependencies** node per project: target frameworks, NuGet packages, project references.
 - **Show All Files** toggle (files outside the project show grayed), file nesting
   (`Foo.xaml.cs`, `appsettings.Development.json`, `Foo.Designer.cs`, ...).

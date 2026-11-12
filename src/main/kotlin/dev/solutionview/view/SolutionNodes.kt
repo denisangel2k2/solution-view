@@ -7,15 +7,21 @@ import com.intellij.ide.projectView.ViewSettings
 import com.intellij.ide.projectView.impl.nodes.PsiFileNode
 import com.intellij.ide.util.treeView.AbstractTreeNode
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.vcs.FileStatus
+import com.intellij.openapi.vcs.FileStatusManager
+import com.intellij.openapi.vcs.changes.ChangeListManager
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiDirectory
 import com.intellij.psi.PsiManager
 import com.intellij.ui.SimpleTextAttributes
+import com.intellij.util.ThreeState
 import dev.solutionview.ProjectState
 import dev.solutionview.SolutionIcons
 import dev.solutionview.SolutionService
+import dev.solutionview.model.ChangeDepth
+import dev.solutionview.model.ChangeDetector
 import dev.solutionview.model.LoadSource
 import dev.solutionview.model.ProjectContents
 import dev.solutionview.model.Solution
@@ -34,6 +40,43 @@ private const val WEIGHT_MESSAGE = -200
 private fun findFile(path: Path): VirtualFile? = LocalFileSystem.getInstance().findFileByNioFile(path)
 
 private fun solutionService(project: Project) = SolutionService.getInstance(project)
+
+private val CLEAN_STATUSES = setOf(FileStatus.NOT_CHANGED, FileStatus.SUPPRESSED, FileStatus.IGNORED)
+
+private fun fileStatus(project: Project, path: Path): FileStatus =
+    findFile(path)?.let { FileStatusManager.getInstance(project).getStatus(it) } ?: FileStatus.NOT_CHANGED
+
+private fun statusOf(depth: ChangeDepth): FileStatus = when (depth) {
+    ChangeDepth.NONE -> FileStatus.NOT_CHANGED
+    ChangeDepth.IMMEDIATE -> FileStatus.NOT_CHANGED_IMMEDIATE
+    ChangeDepth.NESTED -> FileStatus.NOT_CHANGED_RECURSIVE
+}
+
+private fun trackedDepth(state: ThreeState): ChangeDepth = when (state) {
+    ThreeState.YES -> ChangeDepth.IMMEDIATE
+    ThreeState.UNSURE -> ChangeDepth.NESTED
+    ThreeState.NO -> ChangeDepth.NONE
+}
+
+private fun directoryStatus(project: Project, directory: VirtualFile): FileStatus {
+    val own = FileStatusManager.getInstance(project).getStatus(directory)
+    if (own !in CLEAN_STATUSES) return own
+    val path = directory.toNioPathOrNull() ?: return FileStatus.NOT_CHANGED
+    val changes = ChangeListManager.getInstance(project)
+    val unversioned = changes.unversionedFilesPaths.mapNotNull { it.path.toNioPathOrNull() }
+    return statusOf(ChangeDepth.ofDirectory(path, trackedDepth(changes.haveChangesUnder(directory)), unversioned))
+}
+
+private fun directoryStatus(project: Project, path: Path): FileStatus =
+    findFile(path)?.let { directoryStatus(project, it) } ?: FileStatus.NOT_CHANGED
+
+private fun itemsStatus(project: Project, files: List<Path>, children: List<SolutionItem>): FileStatus {
+    val detector = ChangeDetector(
+        isFileChanged = { fileStatus(project, it) !in CLEAN_STATUSES },
+        isProjectChanged = { directoryStatus(project, it.directory) !in CLEAN_STATUSES },
+    )
+    return statusOf(detector.depthOf(files, children))
+}
 
 /** Invisible root. Its single child is the solution node, or a message when there is none. */
 class SolutionRootNode(project: Project, settings: ViewSettings) :
@@ -61,6 +104,10 @@ class SolutionNode(project: Project, solution: Solution, settings: ViewSettings)
     override fun contains(file: VirtualFile): Boolean = solutionService(project!!).containsFile(file)
 
     override fun getVirtualFile(): VirtualFile? = findFile(value.path)
+
+    override fun getFileStatus(): FileStatus =
+        fileStatus(project!!, value.path).takeUnless { it in CLEAN_STATUSES }
+            ?: itemsStatus(project!!, emptyList(), value.items)
 
     override fun update(presentation: PresentationData) {
         val count = value.allProjects().size
@@ -99,6 +146,8 @@ class SolutionFolderNode(project: Project, folder: SolutionFolder, settings: Vie
         }
     }
 
+    override fun getFileStatus(): FileStatus = itemsStatus(project!!, value.files, value.children)
+
     override fun update(presentation: PresentationData) {
         presentation.presentableText = value.name
         presentation.setIcon(AllIcons.Nodes.Folder)
@@ -125,6 +174,8 @@ class ProjectNode(project: Project, solutionProject: SolutionProject, settings: 
     }
 
     override fun getVirtualFile(): VirtualFile? = findFile(value.path)
+
+    override fun getFileStatus(): FileStatus = directoryStatus(project!!, value.directory)
 
     override fun update(presentation: PresentationData) {
         presentation.presentableText = value.name
@@ -182,6 +233,9 @@ class ProjectFolderNode(
     }
 
     override fun getVirtualFile(): VirtualFile? = (value as? PsiDirectory)?.virtualFile
+
+    override fun getFileStatus(): FileStatus =
+        virtualFile?.let { directoryStatus(project!!, it) } ?: FileStatus.NOT_CHANGED
 
     override fun update(presentation: PresentationData) {
         val name = relativeDir.substringAfterLast('/')
